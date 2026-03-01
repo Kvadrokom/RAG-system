@@ -31,6 +31,7 @@ DB_PASSWORD = os.getenv("DB_PASSWORD")
 JINJA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "templates"))
 templates = Jinja2Templates(directory=JINJA_DIR)
 
+
 # Функция для подключения к базе данных
 def get_db_connection():
     return psycopg2.connect(host="localhost", database="rag_system", user="rag_user", password=DB_PASSWORD)
@@ -72,7 +73,7 @@ DB_CONFIG = {
     'port': 5432,
     'database': 'rag_system',
     'user': 'rag_user',
-    'password': 'StrongRAGpassword123'
+    'password': DB_PASSWORD
 }
 
 def get_db_connection():
