@@ -1,14 +1,19 @@
 import psycopg2
-import sys
+import sys, os
+from dotenv import load_dotenv
+
 
 print("🔧 Создание полной структуры RAG системы...")
+
+ENV_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.env"))
+load_dotenv(ENV_DIR)
 
 try:
     conn = psycopg2.connect(
         host="localhost",
         database="rag_system",
         user="rag_user",
-        password="StrongRAGpassword123"
+        password=os.getenv("DB_PASSWORD")
     )
     
     cursor = conn.cursor()
