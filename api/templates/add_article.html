@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Добавить статью</title>
+    <!-- Подключение CSS-стилей -->
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<!-- Заголовок страницы -->
+<h1>Добавить статью в базу знаний</h1>
+
+<!-- Форму отправки данных -->
+<form action="/admin/save_article" method="post">
+    <!-- Поле для ввода названия статьи -->
+    <label for="title">Название:</label><br>
+    <input type="text" id="title" name="title"><br>
+
+    <!-- Поле для ввода описания статьи -->
+    <label for="desc">Описание:</label><br>
+    <textarea id="desc" name="desc"></textarea><br>
+
+    <!-- Поле для ввода содержания статьи -->
+    <label for="text">Текст статьи:</label><br>
+    <textarea id="text" name="text"></textarea><br>
+
+    <!-- Кнопка отправки формы -->
+    <button type="submit">Добавить статью</button>
+</form>
+</body>
+</html>
