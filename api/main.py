@@ -1,5 +1,5 @@
-from datetime import datetime, timedelta, time, json, uuid, base64, aiohttp, httpx
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Header, Request, Form, HTMLResponse
+from datetime import datetime, timedelta
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Header, Request, Form
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.templating import Jinja2Templates
@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 import uvicorn
 import psycopg2
 import logging
-import os
+import os, json, uuid, base64, aiohttp, time
 import jwt
 from typing import Optional
 from voice_processor import voice_processor
@@ -16,6 +16,7 @@ from logger import logger
 from dotenv import load_dotenv
 from rag_enrich import enrich_with_rag_system
 from database_utils import add_text_to_database
+from fastapi.responses import HTMLResponse
 
 
 load_dotenv()
