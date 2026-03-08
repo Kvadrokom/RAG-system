@@ -1,5 +1,5 @@
-from datetime import datetime, timedelta
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Header, Request, Form
+from datetime import datetime, timedelta, time, json, uuid, base64, aiohttp, httpx
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Header, Request, Form, HTMLResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.templating import Jinja2Templates
@@ -14,15 +14,21 @@ from voice_processor import voice_processor
 from schemas import *
 from logger import logger
 from dotenv import load_dotenv
+from rag_enrich import enrich_with_rag_system
+from database_utils import add_text_to_database
 
 
 load_dotenv()
 
 # Configurations
+GIGACHAT_API_URL = 'https://gigachat.devices.sberbank.ru/api/v1/chat/completions'
+CURRENT_TOKEN = ''
+TOKEN_EXPIRES_AT = time.time()
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 DB_PASSWORD = os.getenv("DB_PASSWORD")
+GIGACHAT_AUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 
 # Logging setup
 #logging.basicConfig(level=logging.INFO)
@@ -30,11 +36,6 @@ DB_PASSWORD = os.getenv("DB_PASSWORD")
 
 JINJA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "templates"))
 templates = Jinja2Templates(directory=JINJA_DIR)
-
-
-# Функция для подключения к базе данных
-def get_db_connection():
-    return psycopg2.connect(host="localhost", database="rag_system", user="rag_user", password=DB_PASSWORD)
 
 
 # Получение RqUID из заголовков
@@ -89,33 +90,6 @@ def verify_jwt(token: str = Header(None)):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
 
-# Главная страница административной панели
-@app.get("/admin/add_article")
-async def admin_page(request: Request):
-    return templates.TemplateResponse("add_article.html", {"request": request})
-
-
-# Маршрут для сохранения статьи
-@app.post("/admin/save_article")
-async def save_article(request: Request, title: str = Form(...), desc: str = Form(...), text: str = Form(...)):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("INSERT INTO knowledge_articles (title, description, content) VALUES (%s, %s, %s)", (title, desc, text))
-    conn.commit()
-
-
-@app.post("/save_knowledge")
-async def save_knowledge(knowledge: KnowledgeSchema):
-    # Добавляем запись в базу данных
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("INSERT INTO knowledge_articles (title, description, content) VALUES (%s, %s, %s)", (knowledge.title, knowledge.desc, knowledge.text))
-    conn.commit()
-    cur.close()
-    conn.close()
-    return {"success": True}
-
-
 @app.middleware("http")
 async def add_token_middleware(request: Request, call_next):
     if request.url.path.startswith("/gigachat"):
@@ -129,54 +103,70 @@ async def add_token_middleware(request: Request, call_next):
 async def get_access_token():
     global CURRENT_TOKEN, TOKEN_EXPIRES_AT
     current_time = time.time()
-    async with LOCK:
-        if current_time > TOKEN_EXPIRES_AT:
-            headers = {
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Accept": "application/json",
-                "RqUID": str(uuid.uuid4()),
-                "Authorization": f"Basic {base64.b64encode(AUTH_KEY.encode()).decode()}"
-            }
-            data = {
-                "grant_type": "client_credentials",
-                "scope": "GIGACHAT_API_PERS"
-            }
-            response = requests.post(GIGACHAT_AUTH_URL, headers=headers, data=data)
-            if response.status_code == 200:
-                token_data = response.json()
-                CURRENT_TOKEN = token_data["access_token"]
-
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/json",
+        "RqUID": str(uuid.uuid4()),
+        "Authorization": f"Basic {SECRET_KEY}"
+    }
+    data = {
+        "scope": "GIGACHAT_API_PERS"
+    }
+    if CURRENT_TOKEN == '' or current_time > TOKEN_EXPIRES_AT:
+        connector = aiohttp.TCPConnector(verify_ssl=False)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            async with session.post(GIGACHAT_AUTH_URL, headers=headers, data=data) as resp:
+                response = await resp.json()
+                if resp.status == 200:
+                    token_data = response
+                    CURRENT_TOKEN = token_data["access_token"]
+                    TOKEN_EXPIRES_AT = current_time + token_data['expires_in']
 
 
 # Маршрут для генерации ответа с использованием RAG
 @app.post("/gigachat/generate_answer")
-async def generate_answer(query: Query):
-    rqid = extract_rqid(request)
-    log_with_rqid(rqid, "Начало обработки запроса")
-
-    # Шаг 1: Получаем контекст из RAG-системы
+async def process_voice(query: Query):
+    """
+    Обрабатывает запрос от Telegram-бота, применяя RAG-систему и перенаправляя в Гигачат.
+    """
     try:
-        rag_response = requests.get(f"{RAGSYSTEM_URL}/retrieve_context", params={"query": query.query}).json()
-        rag_response.raise_for_status()  # Проверка статуса ответа
-        rag_json = rag_response.json()
-        enriched_query = f"{rag_response['context']} {query.query}"
-    
-    except requests.HTTPError as err:
-        log_with_rqid(rqid, f"Ошибка при запросе к RAG-системе: {err.response.status_code}, {err.response.text}")
-        return {"error": "Ошибка при обработке запроса"}
+        # Логируем входящий запрос
+        logger.info(f"Received request with rquid: {query.rquid}, User query: {query.user_query}")
 
-    # Шаг 2: Отправляем запрос в GigaChat
-    headers = {"Authorization": f"Bearer {CURRENT_TOKEN}", "RqUID": rqid}
-    try:
-        response = requests.post(f"{GIGACHAT_BASE_URL}/api/v1/messages", json={"query": enriched_query}, headers=headers).json()
-        response.raise_for_status()  # Проверка статуса ответа
-        response_json = response.json()
-        log_with_rqid(rqid, "Запрос обработан успешно")
-        return {"answer": response["generated_answer"]}
+        # Обогащаем запрос с помощью RAG-системы (пример условный, зависит от вашей реализации)
+        enriched_query = enrich_with_rag_system(query.user_query)
 
-    except requests.HTTPError as err:
-        log_with_rqid(rqid, f"Ошибка при запросе к GigaChat: {err.response.status_code}, {err.response.text}")
-        return {"error": "Ошибка при обработке запроса"}
+        # Готовим запрос для Гигачата
+        gigachat_payload = {
+            "enriched_query": enriched_query
+        }
+
+        # Отправляем запрос в Гигачат
+        await get_access_token()
+
+        connector = aiohttp.TCPConnector(ssl=False)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            headers = {
+                "Content-Type":  "application/json",
+                "Accept": "application/json",
+                "RqUID": query.rquid,
+                "Authorization": f"Bearer {CURRENT_TOKEN}"
+            }
+            async with session.post(GIGACHAT_API_URL, headers=headers, json=gigachat_payload) as resp:
+                response = await resp.json()
+
+            # Проверяем статус ответа от Гигачата
+            if response.status_code == 200:
+                answer = resp.text
+                logger.info(f"GigaChat responded successfully: {answer}")
+                return {"result": answer}
+            else:
+                logger.error(f"GigaChat returned error: {resp.status}, {resp.text}")
+                return {"error": "Failed to process the request"}
+
+    except Exception as e:
+        logger.exception(e)
+        return {"error": str(e)}
 
 
 
@@ -204,15 +194,28 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-# Root endpoint
-@app.get("/")
-async def root():
-    return {
-        "service": "RAG API for PostgreSQL + pgvector",
-        "status": "running",
-        "version": "1.0.0",
-        "timestamp": datetime.now().isoformat()
-    }
+@app.get("/", response_class=HTMLResponse)
+async def home_page(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
+
+
+# Маршрут для обработки формы
+@app.post("/add-text/", response_class=HTMLResponse)
+async def submit_text(request: Request, text: str = Form(...)):
+    try:
+        # Информация о документе
+        file_name = "input.txt"
+        file_size = len(text.encode('utf-8'))
+        file_type = "text/plain"
+
+        # Добавляем текст в базу данных
+        num_chunks = add_text_to_database(text, file_name, file_size, file_type)
+
+        # Выводим сообщение о результатах
+        return templates.TemplateResponse("index.html", {"request": request, "num_chunks": num_chunks})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # Health-check endpoint
 @app.get("/health")
