@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Add Text to RAG System</title>
+    <style>
+        form {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            width: 50%;
+            margin: auto;
+        }
+        label, button {
+            font-size: 16px;
+        }
+        textarea {
+            height: 200px;
+        }
+    </style>
+</head>
+<body>
+    <form action="/add-text/" method="post">
+        <label for="text">Enter your text:</label>
+        <textarea id="text" name="text"></textarea>
+        <button type="submit">Submit</button>
+    </form>
+</body>
+</html>
