@@ -14,6 +14,7 @@ load_dotenv()
 MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 tokenizer = None
 model = None
+DB_PASSWORD = os.getenv("DB_PASSWORD")
 
 def init_model():
     """Инициализирует трансформерную модель."""
