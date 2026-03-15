@@ -6,6 +6,7 @@ import torch
 import numpy as np
 import os
 from dotenv import load_dotenv
+from logger import logger
 
 # Загрузим переменные окружения
 load_dotenv()
@@ -109,6 +110,7 @@ def save_chunks_to_db(chunks: List[str], document_id: int):
 
     for index, chunk in enumerate(chunks):
         # Преобразуем кусок текста в векторное представление
+        logger.info(f"Преобразуем кусок текста в векторное представление:\n{chunks}")
         embedding_vector = encode_text(chunk)
 
         # Создаем хэш-чанк
@@ -131,13 +133,16 @@ def add_text_to_database(text: str, file_name: str, file_size: int, file_type: s
     """
     Основной интерфейс для добавления текста в базу данных.
     """
+    logger.info(f"Adding text to RAG:\n {text}")
     # Разделение текста на куски
     chunks = split_into_chunks(text)
 
     # Создаем запись в таблице documents
+    logger.info(f"Создаем запись в таблице documents - {file_name}")
     document_id = create_document_record(file_name, file_size, file_type, user_id=user_id)
 
     # Сохраняем куски в базу данных
+    logger.info(f"Сохраняем куски в базу данных: \n{chunks}")
     save_chunks_to_db(chunks, document_id)
 
     return len(chunks)
