@@ -1,2 +1,52 @@
 Особенности установки пакета torch
 pip install torch==2.1.0+cpu -f https://download.pytorch.org/whl/torch_stable.html
+Чтобы логировать только запросы к БД rag-system. Вот оптимальная конфигурация:
+
+1. Базовая настройка в postgresql.conf
+Оставьте только самые необходимые глобальные настройки:
+
+ini
+# Включение коллектора логов (это обязательно)
+logging_collector = on
+log_directory = 'pg_log'
+log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
+log_rotation_age = 1d
+log_rotation_size = 100MB
+log_destination = 'csvlog'
+
+# Базовый формат строки (без лишних деталей)
+log_line_prefix = '%t [%p]: db=%d,user=%u,app=%a,client=%h '
+
+# НЕ УКАЗЫВАЕМ log_statement, log_min_duration_statement и др. глобально!
+2. Включите логирование ТОЛЬКО для БД rag-system
+Подключитесь к PostgreSQL и выполните:
+
+sql
+-- Включаем логирование ВСЕХ запросов только для rag-system
+ALTER DATABASE "rag-system" SET log_statement = 'all';
+ALTER DATABASE "rag-system" SET log_min_duration_statement = 0;
+ALTER DATABASE "rag-system" SET log_parameter_max_length = -1;
+
+-- Явно отключаем логирование для остальных баз (для надежности)
+ALTER DATABASE postgres SET log_statement = 'none';
+ALTER DATABASE template0 SET log_statement = 'none';
+ALTER DATABASE template1 SET log_statement = 'none';
+ALTER DATABASE zabbix SET log_statement = 'none';  -- если есть
+3. Исключите Zabbix из логирования в rag-system
+sql
+-- Отключаем логирование для пользователя zabbix в БД rag-system
+ALTER ROLE zabbix IN DATABASE "rag-system" SET log_statement = 'none';
+ALTER ROLE zabbix IN DATABASE "rag-system" SET log_min_duration_statement = -1;
+4. Перезапустите PostgreSQL
+bash
+sudo systemctl restart postgresql@13-main
+Если захотите вернуть всё обратно
+sql
+-- Сбросить настройки для БД
+ALTER DATABASE "rag-system" RESET log_statement;
+ALTER DATABASE "rag-system" RESET log_min_duration_statement;
+ALTER DATABASE "rag-system" RESET log_parameter_max_length;
+
+-- Сбросить настройки для пользователя
+ALTER ROLE zabbix IN DATABASE "rag-system" RESET log_statement;
+ALTER ROLE zabbix IN DATABASE "rag-system" RESET log_min_duration_statement;

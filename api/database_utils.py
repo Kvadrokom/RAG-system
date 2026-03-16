@@ -17,11 +17,11 @@ tokenizer = None
 model = None
 DB_PASSWORD = os.getenv("DB_PASSWORD")
 
-def init_model():
-    """Инициализирует трансформерную модель."""
-    global tokenizer, model
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-    model = AutoModel.from_pretrained(MODEL_NAME)
+# ИНИЦИАЛИЗИРУЕМ МОДЕЛЬ СРАЗУ ПРИ ЗАГРУЗКЕ МОДУЛЯ
+logger.info("Инициализация модели при загрузке модуля...")
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+model = AutoModel.from_pretrained(MODEL_NAME)
+logger.info("Модель успешно инициализирована")
 
 def mean_pooling(model_output, attention_mask):
     """Средний пуллинг эмбеддингов."""
@@ -33,10 +33,17 @@ def mean_pooling(model_output, attention_mask):
 
 def encode_text(text):
     """Преобразует текст в векторное представление."""
-    inputs = tokenizer([text], padding=True, truncation=True, max_length=512, return_tensors="pt")
-    outputs = model(**inputs)
-    embeddings = mean_pooling(outputs, inputs["attention_mask"])
-    return embeddings.flatten()
+    try:
+        logger.info(f"Кодирование текста длиной {len(text)} символов...")
+        inputs = tokenizer([text], padding=True, truncation=True, max_length=512, return_tensors="pt")
+        outputs = model(**inputs)
+        embeddings = mean_pooling(outputs, inputs["attention_mask"])
+        result = embeddings.flatten()
+        logger.info(f"Получен вектор размерностью {result.shape}")
+        return result
+    except Exception as e:
+        logger.error(f"Ошибка при кодировании текста: {e}")
+        raise
 
 def split_into_chunks(text: str, chunk_size: int = 500) -> List[str]:
     """
@@ -58,6 +65,7 @@ def split_into_chunks(text: str, chunk_size: int = 500) -> List[str]:
     if current_chunk:
         chunks.append(" ".join(current_chunk))
 
+    logger.info(f"Текст разделен на {len(chunks)} чанков")
     return chunks
 
 def calculate_md5_hash(text: str) -> str:
@@ -72,77 +80,132 @@ def create_document_record(file_name: str, file_size: int, file_type: str, user_
     """
     Создает запись в таблице documents и возвращает её id.
     """
-    connection = psycopg2.connect(
-        host="localhost",
-        database="rag_system",
-        user="rag_user",
-        password=os.getenv("DB_PASSWORD"),
-    )
-    cursor = connection.cursor()
+    connection = None
+    cursor = None
+    try:
+        logger.info(f"Подключение к БД для создания документа {file_name}")
+        connection = psycopg2.connect(
+            host="localhost",
+            database="rag_system",
+            user="rag_user",
+            password=os.getenv("DB_PASSWORD"),
+        )
+        cursor = connection.cursor()
 
-    # Создаем запись в таблице documents
-    insert_query = """
-        INSERT INTO documents (user_id, file_name, file_size, file_type)
-        VALUES (%s, %s, %s, %s)
-        RETURNING id;
-    """
-    values = (user_id, file_name, file_size, file_type)
-    cursor.execute(insert_query, values)
-    document_id = cursor.fetchone()[0]
+        # Создаем запись в таблице documents
+        insert_query = """
+            INSERT INTO documents (user_id, file_name, file_size, file_type)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id;
+        """
+        values = (user_id, file_name, file_size, file_type)
+        logger.info(f"Выполнение запроса: {insert_query} с values={values}")
+        cursor.execute(insert_query, values)
+        document_id = cursor.fetchone()[0]
+        logger.info(f"Получен ID документа: {document_id}")
 
-    connection.commit()
-    cursor.close()
-    connection.close()
-
-    return document_id
+        connection.commit()
+        return document_id
+    except Exception as e:
+        logger.error(f"Ошибка при создании записи документа: {e}")
+        if connection:
+            connection.rollback()
+        raise
+    finally:
+        if cursor:
+            cursor.close()
+        if connection:
+            connection.close()
 
 def save_chunks_to_db(chunks: List[str], document_id: int):
     """
     Сохраняет куски текста в базу данных.
     """
-    connection = psycopg2.connect(
-        host="localhost",
-        database="rag_system",
-        user="rag_user",
-        password=os.getenv("DB_PASSWORD"),
-    )
-    cursor = connection.cursor()
+    connection = None
+    cursor = None
+    try:
+        logger.info(f"Подключение к БД для сохранения чанков документа {document_id}")
+        connection = psycopg2.connect(
+            host="localhost",
+            database="rag_system",
+            user="rag_user",
+            password=os.getenv("DB_PASSWORD"),
+        )
+        cursor = connection.cursor()
+        
+        logger.info(f"Начинаем сохранение {len(chunks)} чанков для документа {document_id}")
+        
+        for index, chunk in enumerate(chunks):
+            try:
+                logger.info(f"Обработка чанка {index + 1}/{len(chunks)}")
+                logger.info(f"Текст чанка (первые 100 символов): {chunk[:100]}...")
+                
+                # Преобразуем кусок текста в векторное представление
+                embedding_vector = encode_text(chunk)
+                
+                # Создаем хэш-чанк
+                chunk_hash = calculate_md5_hash(chunk)
+                logger.info(f"Хэш чанка: {chunk_hash}")
+                
+                # Преобразуем numpy array в список для psycopg2
+                embedding_list = embedding_vector.tolist()
+                logger.info(f"Размерность эмбеддинга: {len(embedding_list)}")
+                
+                # Подготовим запрос на вставку
+                insert_query = """
+                    INSERT INTO chunks (document_id, chunk_index, chunk_text, chunk_hash, embedding)
+                    VALUES (%s, %s, %s, %s, %s);
+                """
+                
+                values = (document_id, index, chunk, chunk_hash, embedding_list)
+                logger.info(f"Выполнение INSERT для чанка {index + 1}")
+                cursor.execute(insert_query, values)
+                logger.info(f"Чанк {index + 1} успешно вставлен")
+                
+            except Exception as e:
+                logger.error(f"Ошибка при сохранении чанка {index + 1}: {e}")
+                raise
 
-    for index, chunk in enumerate(chunks):
-        # Преобразуем кусок текста в векторное представление
-        logger.info(f"Преобразуем кусок текста в векторное представление:\n{chunks}")
-        embedding_vector = encode_text(chunk)
-
-        # Создаем хэш-чанк
-        chunk_hash = calculate_md5_hash(chunk)
-
-        # Подготовим запрос на вставку
-        insert_query = """
-            INSERT INTO chunks (document_id, chunk_index, chunk_text, chunk_hash, embedding)
-            VALUES (%s, %s, %s, %s, %s);
-        """
-
-        values = (document_id, index, chunk, chunk_hash, embedding_vector)
-        cursor.execute(insert_query, values)
-
-    connection.commit()
-    cursor.close()
-    connection.close()
+        connection.commit()
+        logger.info(f"Все {len(chunks)} чанков успешно сохранены в БД")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении чанков в БД: {e}")
+        if connection:
+            connection.rollback()
+        raise
+    finally:
+        if cursor:
+            cursor.close()
+        if connection:
+            connection.close()
 
 def add_text_to_database(text: str, file_name: str, file_size: int, file_type: str, user_id: int = 1):
     """
     Основной интерфейс для добавления текста в базу данных.
     """
-    logger.info(f"Adding text to RAG:\n {text}")
-    # Разделение текста на куски
-    chunks = split_into_chunks(text)
+    try:
+        logger.info(f"=== НАЧАЛО ОБРАБОТКИ ФАЙЛА: {file_name} ===")
+        logger.info(f"Размер текста: {len(text)} символов")
+        
+        # Разделение текста на куски
+        chunks = split_into_chunks(text)
+        logger.info(f"Получено {len(chunks)} чанков")
 
-    # Создаем запись в таблице documents
-    logger.info(f"Создаем запись в таблице documents - {file_name}")
-    document_id = create_document_record(file_name, file_size, file_type, user_id=user_id)
+        # Создаем запись в таблице documents
+        logger.info(f"Создание записи в таблице documents...")
+        document_id = create_document_record(file_name, file_size, file_type, user_id=user_id)
+        logger.info(f"Создан документ с ID: {document_id}")
 
-    # Сохраняем куски в базу данных
-    logger.info(f"Сохраняем куски в базу данных: \n{chunks}")
-    save_chunks_to_db(chunks, document_id)
-
-    return len(chunks)
+        # Сохраняем куски в базу данных
+        logger.info(f"Сохранение чанков в базу данных...")
+        save_chunks_to_db(chunks, document_id)
+        
+        logger.info(f"=== УСПЕШНО ЗАВЕРШЕНО: добавлено {len(chunks)} чанков для документа {document_id} ===")
+        return len(chunks)
+        
+    except Exception as e:
+        logger.error(f"КРИТИЧЕСКАЯ ОШИБКА в add_text_to_database: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise
