@@ -4,6 +4,7 @@ from transformers import AutoTokenizer, AutoModel
 import torch
 import os
 from dotenv import load_dotenv
+from logger import logger
 
 # Load environment variables
 load_dotenv()
@@ -16,8 +17,10 @@ model = None
 def init_model():
     """Инициализирует трансформерную модель."""
     global tokenizer, model
+    print("Инициализация модели...")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     model = AutoModel.from_pretrained(MODEL_NAME)
+    print("Модель инициализирована")
 
 def mean_pooling(model_output, attention_mask):
     """Средний пуллинг эмбеддингов"""
@@ -44,14 +47,28 @@ def fetch_relevant_chunks(embedding_vector):
     )
     cursor = connection.cursor()
     
-    # Запрос к векторной базе данных для поиска близких соседей
-    cursor.execute("""
+    # Преобразуем numpy array в строку для PostgreSQL
+    # pgvector ожидает формат: '[0.1,0.2,0.3,...]'
+    if isinstance(embedding_vector, np.ndarray):
+        # Преобразуем в список и затем в строку
+        embedding_list = embedding_vector.tolist()
+        embedding_str = '[' + ','.join(str(x) for x in embedding_list) + ']'
+        logger.info(f"Преобразуем в список и затем в строку {embedding_str}")
+    else:
+        embedding_str = str(embedding_vector)
+        logger.info(f"Преобразуем в список и затем в строку {embedding_str}")
+    
+    # Поиск ближайших соседей с использованием pgvector
+    query = """
         SELECT chunk_text 
         FROM chunks 
-        ORDER BY embedding <=> %s LIMIT 5
-    """, (embedding_vector,))
+        ORDER BY embedding <=> %s::vector 
+        LIMIT 5
+    """
     
+    cursor.execute(query, (embedding_str,))
     relevant_chunks = cursor.fetchall()
+    
     cursor.close()
     connection.close()
     
@@ -64,13 +81,24 @@ def enrich_with_rag_system(user_query):
     if tokenizer is None or model is None:
         init_model()
     
-    # Преобразуем запрос в векторное представление
-    embedding_vector = encode_text(user_query)
+    try:
+        # Преобразуем запрос в векторное представление
+        logger.info(f"Преобразуем запрос {user_query} в векторное представление")
+        embedding_vector = encode_text(user_query)
+        
+        # Ищем ближайшие соседи (релевантные фрагменты текста)
+        relevant_chunks = fetch_relevant_chunks(embedding_vector)
+        logger.info(f"Ищем ближайшие соседи (релевантные фрагменты текста) {relevant_chunks}")
+        
+        # Объединяем исходный запрос с релевантными фрагментами
+        if relevant_chunks:
+            enriched_query = "\n\n".join(relevant_chunks + [user_query])
+        else:
+            enriched_query = user_query
+        
+        return enriched_query
+        
+    except Exception as e:
+        print(f"Ошибка в RAG: {e}")
+        return user_query  # В случае ошибки возвращаем исходный запрос
     
-    # Ищем ближайшие соседи (релевантные фрагменты текста)
-    relevant_chunks = fetch_relevant_chunks(embedding_vector)
-    
-    # Объединяем исходный запрос с релевантными фрагментами
-    enriched_query = "\n\n".join(relevant_chunks + [user_query])
-    
-    return enriched_query

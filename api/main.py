@@ -18,36 +18,24 @@ from rag_enrich import enrich_with_rag_system
 from database_utils import add_text_to_database
 from fastapi.responses import HTMLResponse
 
-
 load_dotenv()
 
 # Configurations
 GIGACHAT_API_URL = 'https://gigachat.devices.sberbank.ru/api/v1/chat/completions'
+GIGACHAT_AUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 CURRENT_TOKEN = ''
-TOKEN_EXPIRES_AT = time.time()
+TOKEN_EXPIRES_AT = 0
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 DB_PASSWORD = os.getenv("DB_PASSWORD")
-GIGACHAT_AUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 
 # Logging setup
-#logging.basicConfig(level=logging.INFO)
-#logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+# logger = logging.getLogger(__name__)
 
 JINJA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "templates"))
 templates = Jinja2Templates(directory=JINJA_DIR)
-
-
-# Получение RqUID из заголовков
-def extract_rqid(request: Request):
-    return request.headers.get("RqUID", "")
-
-
-# Логирование с использованием RqUID
-def log_with_rqid(rqid, message):
-    logger.info(f"[RqUID={rqid}] {message}")
-
 
 # FastAPI initialization
 app = FastAPI(
@@ -59,11 +47,10 @@ app = FastAPI(
 STATIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "static"))
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-
 # CORS policy
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://185.114.72.54", "https://185.114.72.54"],
+    allow_origins=["*"],  # Для теста можно *, потом ограничить
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -81,7 +68,6 @@ DB_CONFIG = {
 def get_db_connection():
     return psycopg2.connect(**DB_CONFIG)
 
-
 # JWT Authentication
 def verify_jwt(token: str = Header(None)):
     try:
@@ -90,20 +76,16 @@ def verify_jwt(token: str = Header(None)):
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-
-@app.middleware("http")
-async def add_token_middleware(request: Request, call_next):
-    if request.url.path.startswith("/gigachat"):
-        await get_access_token()
-        request.scope["headers"]["Authorization"] = f"Bearer {CURRENT_TOKEN}".encode()
-    response = await call_next(request)
-    return response
-
-
-# Получение токена для GigaChat
+# ========== ИСПРАВЛЕННАЯ ФУНКЦИЯ ПОЛУЧЕНИЯ ТОКЕНА ==========
 async def get_access_token():
     global CURRENT_TOKEN, TOKEN_EXPIRES_AT
     current_time = time.time()
+    
+    # Если токен еще действителен, возвращаем его
+    if CURRENT_TOKEN and current_time < TOKEN_EXPIRES_AT:
+        logger.info("Token still valid, using existing")
+        return CURRENT_TOKEN
+    
     headers = {
         "Content-Type": "application/x-www-form-urlencoded",
         "Accept": "application/json",
@@ -113,18 +95,31 @@ async def get_access_token():
     data = {
         "scope": "GIGACHAT_API_PERS"
     }
-    if CURRENT_TOKEN == '' or current_time > TOKEN_EXPIRES_AT:
-        connector = aiohttp.TCPConnector(verify_ssl=False)
-        async with aiohttp.ClientSession(connector=connector) as session:
-            async with session.post(GIGACHAT_AUTH_URL, headers=headers, data=data) as resp:
-                response = await resp.json()
-                if resp.status == 200:
-                    token_data = response
-                    CURRENT_TOKEN = token_data["access_token"]
-                    TOKEN_EXPIRES_AT = current_time + token_data['expires_in']
+    
+    connector = aiohttp.TCPConnector(ssl=False)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        async with session.post(GIGACHAT_AUTH_URL, headers=headers, data=data) as resp:
+            if resp.status != 200:
+                error_text = await resp.text()
+                logger.error(f"Failed to get token: {resp.status} - {error_text}")
+                raise HTTPException(status_code=500, detail=f"Token error: {resp.status}")
+            
+            response = await resp.json()
+            logger.info(f"Token response received, keys: {list(response.keys())}")
+            
+            # Получаем токен
+            CURRENT_TOKEN = response.get("access_token")
+            if not CURRENT_TOKEN:
+                raise HTTPException(status_code=500, detail="No access_token in response")
+            
+            # Получаем expires_in (с значением по умолчанию)
+            expires_in = response.get("expires_in", 3600)  # По умолчанию 1 час
+            TOKEN_EXPIRES_AT = current_time + expires_in
+            
+            logger.info(f"Token obtained successfully, expires in {expires_in} seconds")
+            return CURRENT_TOKEN
 
-
-# Маршрут для генерации ответа с использованием RAG
+# ========== ИСПРАВЛЕННЫЙ ЭНДПОИНТ ==========
 @app.post("/gigachat/generate_answer")
 async def process_voice(query: Query):
     """
@@ -132,49 +127,70 @@ async def process_voice(query: Query):
     """
     try:
         # Логируем входящий запрос
-        logger.info(f"Received request with rquid: {query.rquid}, User query: {query.user_query}")
-
-        # Обогащаем запрос с помощью RAG-системы (пример условный, зависит от вашей реализации)
+        logger.info(f"✅ Received request with rquid: {query.rquid}, User query: {query.user_query}")
+        
+        # Обогащаем запрос с помощью RAG-системы
         enriched_query = enrich_with_rag_system(query.user_query)
-
-        # Готовим запрос для Гигачата
+        logger.info(f"Enriched query: {enriched_query}")
+        
+        # Получаем токен для GigaChat
+        token = await get_access_token()
+        logger.info("Token obtained successfully")
+        
+        # Правильный формат запроса для GigaChat API
         gigachat_payload = {
-            "enriched_query": enriched_query
+            "model": "GigaChat-2",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": enriched_query
+                }
+            ],
+            "temperature": 0.7,
+            "max_tokens": 1000
         }
-
+        
         # Отправляем запрос в Гигачат
-        await get_access_token()
-
         connector = aiohttp.TCPConnector(ssl=False)
         async with aiohttp.ClientSession(connector=connector) as session:
             headers = {
-                "Content-Type":  "application/json",
+                "Content-Type": "application/json",
                 "Accept": "application/json",
                 "RqUID": query.rquid,
-                "Authorization": f"Bearer {CURRENT_TOKEN}"
+                "Authorization": f"Bearer {token}"
             }
+            
+            logger.info(f"Sending request to GigaChat API")
+            
             async with session.post(GIGACHAT_API_URL, headers=headers, json=gigachat_payload) as resp:
-                response = await resp.json()
-
-            # Проверяем статус ответа от Гигачата
-            if response.status_code == 200:
-                answer = resp.text
-                logger.info(f"GigaChat responded successfully: {answer}")
-                return {"result": answer}
-            else:
-                logger.error(f"GigaChat returned error: {resp.status}, {resp.text}")
-                return {"error": "Failed to process the request"}
-
+                logger.info(f"GigaChat response status: {resp.status}")
+                
+                if resp.status == 200:
+                    response = await resp.json()
+                    logger.info("Successfully received response from GigaChat")
+                    
+                    # Извлекаем ответ
+                    answer = response['choices'][0]['message']['content']
+                    logger.info(f"Answer received (length: {len(answer)} chars)")
+                    
+                    return {"result": answer}
+                else:
+                    error_text = await resp.text()
+                    logger.error(f"GigaChat error {resp.status}: {error_text}")
+                    return {"error": f"GigaChat error: {resp.status}, details: {error_text}"}
+                    
+    except KeyError as e:
+        logger.error(f"KeyError parsing GigaChat response: {e}")
+        return {"error": f"Unexpected response format from GigaChat: {str(e)}"}
     except Exception as e:
-        logger.exception(e)
+        logger.exception(f"Exception in process_voice: {e}")
         return {"error": str(e)}
 
-
+# ========== ОСТАЛЬНЫЕ ЭНДПОИНТЫ (без изменений) ==========
 
 # Login route
 @app.post("/login", response_model=Token)
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    # Simple authentication (replace this with real authentication mechanism)
     if form_data.username == "admin" and form_data.password == "password":
         access_token_expires = ACCESS_TOKEN_EXPIRE_MINUTES * 60
         access_token = create_access_token(
@@ -184,7 +200,6 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
         return {"access_token": access_token, "token_type": "bearer"}
     raise HTTPException(status_code=401, detail="Incorrect username or password")
 
-# Helper functions
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     if expires_delta:
@@ -199,26 +214,23 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 async def home_page(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
-
-# Маршрут для обработки формы
 @app.post("/add-text/", response_class=HTMLResponse)
 async def submit_text(request: Request, text: str = Form(...)):
     try:
-        # Информация о документе
+        logger.info(f"Input text:\n {text.encode('utf-8')}")
         file_name = "input.txt"
         file_size = len(text.encode('utf-8'))
         file_type = "text/plain"
-
-        # Добавляем текст в базу данных
+        
+        logger.info(f"Adding text to DB")
         num_chunks = add_text_to_database(text, file_name, file_size, file_type)
-
-        # Выводим сообщение о результатах
+        
+        logger.info("Successfully add text to DB")
         return templates.TemplateResponse("index.html", {"request": request, "num_chunks": num_chunks})
     except Exception as e:
+        logger.error(f"Error - {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# Health-check endpoint
 @app.get("/health")
 async def health():
     try:
@@ -244,7 +256,6 @@ async def health():
             "timestamp": datetime.now().isoformat()
         }
 
-# Stats endpoint
 @app.get("/api/v1/stats")
 async def get_stats():
     try:
@@ -271,7 +282,6 @@ async def get_stats():
         logger.error(f"Stats error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Voice recognition endpoint
 @app.post("/api/v1/voice/recognize")
 async def recognize_voice(voice_file: UploadFile = File(...)):
     try:
@@ -281,9 +291,13 @@ async def recognize_voice(voice_file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"Voice recognition error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-
+    
+    
+@app.get("/api/v1/search")
+async def search(request: Request):
+    query_param = request.query_params.get("q")
+    logger.info(f"Get request {query_param}")
+    return enrich_with_rag_system(query_param)
 
 # Run the server
 if __name__ == "__main__":
