@@ -67,7 +67,7 @@ async def _recognize_via_api(token: str, file_path: str, language: str) -> str:
             if resp.status == 200:
                 result = await resp.json()
                 # Формат ответа: {"result": [{"text": "..."}]}
-                return result.get('result', [{}])[0].get('text', '')
+                return result
             else:
                 error_text = await resp.text()
                 raise Exception(f"API error {resp.status}: {error_text}")
@@ -113,11 +113,11 @@ async def recognize_audio(
         result = await _recognize_via_api(token, tmp_path, language)
         
         if result:
-            logger.info(f"Распознано: {result[:50]}...")
+            logger.info(f"Распознано: {result['result']}...")
         else:
             logger.warning("Распознавание вернуло пустой результат")
         
-        return result
+        return result['result'][0]
         
     except Exception as e:
         logger.error(f"Ошибка распознавания: {e}")

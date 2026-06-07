@@ -22,7 +22,7 @@ from fastapi.responses import HTMLResponse
 from auth import get_access_token, get_gigachat_token, get_salute_token
 
 # Импортируем функцию распознавания из my_salute_speech.py
-from my_salute_speech import recognize_audio, SaluteSpeechError
+from salute_speech_voice import recognize_audio, SaluteSpeechError
 
 load_dotenv()
 
@@ -95,81 +95,6 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С GIGACHAT (ДЛЯ ГОЛОСА) ==========
-
-async def upload_audio_to_gigachat(token: str, audio_bytes: bytes, filename: str) -> str:
-    """
-    Загружает аудио в хранилище GigaChat.
-    
-    Returns:
-        file_id для использования в attachments
-    """
-    from pathlib import Path
-    
-    # Определяем MIME-тип
-    ext = Path(filename).suffix.lower()
-    mime_types = {
-        '.ogg': 'audio/ogg',
-        '.mp3': 'audio/mpeg',
-        '.opus': 'audio/opus',
-        '.wav': 'audio/wav',
-        '.m4a': 'audio/mp4'
-    }
-    mime_type = mime_types.get(ext, 'audio/ogg')
-    
-    files = {'file': (filename, audio_bytes, mime_type)}
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json"
-    }
-    
-    connector = aiohttp.TCPConnector(ssl=False)
-    async with aiohttp.ClientSession(connector=connector) as session:
-        async with session.post("https://gigachat.devices.sberbank.ru/api/v1/files", headers=headers, files=files) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                logger.info(f"Аудио загружено, file_id: {data['id']}")
-                return data["id"]
-            else:
-                error_text = await resp.text()
-                logger.error(f"Upload failed: {resp.status} - {error_text}")
-                raise Exception(f"Failed to upload audio: {resp.status}")
-
-
-async def send_to_gigachat_with_audio(token: str, rag_context: str, file_id: str, rquid: str) -> str:
-    """
-    Отправляет запрос в GigaChat с аудиоаттачментом.
-    """
-    payload = {
-        "model": "GigaChat-2",
-        "messages": [
-            {
-                "role": "user",
-                "content": rag_context,
-                "attachments": [file_id]
-            }
-        ],
-        "temperature": 0.7,
-        "max_tokens": 2000
-    }
-    
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "Authorization": f"Bearer {token}",
-        "RqUID": rquid
-    }
-    
-    connector = aiohttp.TCPConnector(ssl=False)
-    async with aiohttp.ClientSession(connector=connector) as session:
-        async with session.post(GIGACHAT_API_URL, headers=headers, json=payload) as resp:
-            if resp.status == 200:
-                response = await resp.json()
-                return response['choices'][0]['message']['content']
-            else:
-                error_text = await resp.text()
-                logger.error(f"GigaChat error: {resp.status} - {error_text}")
-                raise Exception(f"GigaChat error: {resp.status}")
-
 
 async def enrich_voice_with_rag(recognized_text: str) -> dict:
     """
@@ -256,8 +181,7 @@ async def recognize_voice(voice_file: UploadFile = File(...)):
     """
     Обрабатывает голосовое сообщение:
     1. Распознает речь через SaluteSpeech
-    2. Находит релевантный контекст через RAG
-    3. Отправляет оригинальное аудио + контекст в GigaChat
+    2. Отправляет распознанный текст в существующий эндпоинт /gigachat/generate_answer
     """
     logger.info(f"🎤 Получен голосовой запрос: {voice_file.filename}")
     
@@ -277,33 +201,19 @@ async def recognize_voice(voice_file: UploadFile = File(...)):
         if not recognized_text or not recognized_text.strip():
             return {"text": "Не удалось распознать голосовое сообщение"}
         
-        # 3. Обогащаем через RAG
-        rag_result = await enrich_voice_with_rag(recognized_text)
-        logger.info(f"📚 RAG: контекст найден - {rag_result['has_context']}")
-        
-        # 4. Получаем токен для GigaChat
-        token = await get_gigachat_token()
-        
-        # 5. Загружаем оригинальное аудио в GigaChat
-        file_id = await upload_audio_to_gigachat(
-            token=token,
-            audio_bytes=voice_data,
-            filename=voice_file.filename
+        # 3. Отправляем распознанный текст в существующий эндпоинт!
+        query = Query(
+            rquid=str(uuid.uuid4()),
+            user_query=recognized_text
         )
-        logger.info(f"🎵 Аудио загружено, file_id: {file_id}")
         
-        # 6. Отправляем запрос в GigaChat
-        rquid = str(uuid.uuid4())
-        answer = await send_to_gigachat_with_audio(
-            token=token,
-            rag_context=rag_result["context"],
-            file_id=file_id,
-            rquid=rquid
-        )
-        logger.info(f"💬 Ответ получен, длина: {len(answer)} символов")
+        result = await process_voice(query)
         
-        # 7. Возвращаем результат
-        return {"text": answer}
+        # 4. Возвращаем ответ
+        if "result" in result:
+            return {"text": result["result"]}
+        else:
+            return {"text": f"Ошибка: {result.get('error', 'Неизвестная ошибка')}"}
     
     except SaluteSpeechError as e:
         logger.error(f"❌ Ошибка распознавания: {e}")
