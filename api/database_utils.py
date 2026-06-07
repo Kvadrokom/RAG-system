@@ -13,15 +13,28 @@ load_dotenv()
 
 # Модель для векторизации
 MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-tokenizer = None
-model = None
 DB_PASSWORD = os.getenv("DB_PASSWORD")
 
-# ИНИЦИАЛИЗИРУЕМ МОДЕЛЬ СРАЗУ ПРИ ЗАГРУЗКЕ МОДУЛЯ
-logger.info("Инициализация модели при загрузке модуля...")
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-model = AutoModel.from_pretrained(MODEL_NAME)
-logger.info("Модель успешно инициализирована")
+# Глобальные переменные для модели (изначально None)
+_tokenizer = None
+_model = None
+
+
+def _init_model():
+    """
+    Ленивая инициализация модели.
+    Модель загружается только при первом вызове.
+    """
+    global _tokenizer, _model
+    
+    if _tokenizer is None or _model is None:
+        logger.info("Инициализация модели...")
+        _tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+        _model = AutoModel.from_pretrained(MODEL_NAME)
+        logger.info("Модель успешно инициализирована")
+    
+    return _tokenizer, _model
+
 
 def mean_pooling(model_output, attention_mask):
     """Средний пуллинг эмбеддингов."""
@@ -31,10 +44,15 @@ def mean_pooling(model_output, attention_mask):
     sum_mask = np.clip(input_mask_expanded.sum(axis=1), a_min=1e-9, a_max=None)
     return sum_embeddings / sum_mask
 
+
 def encode_text(text):
     """Преобразует текст в векторное представление."""
     try:
         logger.info(f"Кодирование текста длиной {len(text)} символов...")
+        
+        # Ленивая инициализация модели
+        tokenizer, model = _init_model()
+        
         inputs = tokenizer([text], padding=True, truncation=True, max_length=512, return_tensors="pt")
         outputs = model(**inputs)
         embeddings = mean_pooling(outputs, inputs["attention_mask"])
@@ -44,6 +62,7 @@ def encode_text(text):
     except Exception as e:
         logger.error(f"Ошибка при кодировании текста: {e}")
         raise
+
 
 def split_into_chunks(text: str, chunk_size: int = 500) -> List[str]:
     """
@@ -68,6 +87,7 @@ def split_into_chunks(text: str, chunk_size: int = 500) -> List[str]:
     logger.info(f"Текст разделен на {len(chunks)} чанков")
     return chunks
 
+
 def calculate_md5_hash(text: str) -> str:
     """
     Вычисляет MD5-хэш строки.
@@ -75,6 +95,7 @@ def calculate_md5_hash(text: str) -> str:
     md5_hasher = hashlib.md5()
     md5_hasher.update(text.encode('utf-8'))
     return md5_hasher.hexdigest()
+
 
 def create_document_record(file_name: str, file_size: int, file_type: str, user_id: int = 1) -> int:
     """
@@ -92,14 +113,12 @@ def create_document_record(file_name: str, file_size: int, file_type: str, user_
         )
         cursor = connection.cursor()
 
-        # Создаем запись в таблице documents
         insert_query = """
             INSERT INTO documents (user_id, file_name, file_size, file_type)
             VALUES (%s, %s, %s, %s)
             RETURNING id;
         """
         values = (user_id, file_name, file_size, file_type)
-        logger.info(f"Выполнение запроса: {insert_query} с values={values}")
         cursor.execute(insert_query, values)
         document_id = cursor.fetchone()[0]
         logger.info(f"Получен ID документа: {document_id}")
@@ -116,6 +135,7 @@ def create_document_record(file_name: str, file_size: int, file_type: str, user_
             cursor.close()
         if connection:
             connection.close()
+
 
 def save_chunks_to_db(chunks: List[str], document_id: int):
     """
@@ -140,25 +160,15 @@ def save_chunks_to_db(chunks: List[str], document_id: int):
                 logger.info(f"Обработка чанка {index + 1}/{len(chunks)}")
                 logger.info(f"Текст чанка (первые 100 символов): {chunk[:100]}...")
                 
-                # Преобразуем кусок текста в векторное представление
                 embedding_vector = encode_text(chunk)
-                
-                # Создаем хэш-чанк
                 chunk_hash = calculate_md5_hash(chunk)
-                logger.info(f"Хэш чанка: {chunk_hash}")
-                
-                # Преобразуем numpy array в список для psycopg2
                 embedding_list = embedding_vector.tolist()
-                logger.info(f"Размерность эмбеддинга: {len(embedding_list)}")
                 
-                # Подготовим запрос на вставку
                 insert_query = """
                     INSERT INTO chunks (document_id, chunk_index, chunk_text, chunk_hash, embedding)
                     VALUES (%s, %s, %s, %s, %s);
                 """
-                
                 values = (document_id, index, chunk, chunk_hash, embedding_list)
-                logger.info(f"Выполнение INSERT для чанка {index + 1}")
                 cursor.execute(insert_query, values)
                 logger.info(f"Чанк {index + 1} успешно вставлен")
                 
@@ -180,6 +190,7 @@ def save_chunks_to_db(chunks: List[str], document_id: int):
         if connection:
             connection.close()
 
+
 def add_text_to_database(text: str, file_name: str, file_size: int, file_type: str, user_id: int = 1):
     """
     Основной интерфейс для добавления текста в базу данных.
@@ -188,17 +199,12 @@ def add_text_to_database(text: str, file_name: str, file_size: int, file_type: s
         logger.info(f"=== НАЧАЛО ОБРАБОТКИ ФАЙЛА: {file_name} ===")
         logger.info(f"Размер текста: {len(text)} символов")
         
-        # Разделение текста на куски
         chunks = split_into_chunks(text)
         logger.info(f"Получено {len(chunks)} чанков")
 
-        # Создаем запись в таблице documents
-        logger.info(f"Создание записи в таблице documents...")
         document_id = create_document_record(file_name, file_size, file_type, user_id=user_id)
         logger.info(f"Создан документ с ID: {document_id}")
 
-        # Сохраняем куски в базу данных
-        logger.info(f"Сохранение чанков в базу данных...")
         save_chunks_to_db(chunks, document_id)
         
         logger.info(f"=== УСПЕШНО ЗАВЕРШЕНО: добавлено {len(chunks)} чанков для документа {document_id} ===")
