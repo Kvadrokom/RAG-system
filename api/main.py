@@ -206,14 +206,15 @@ async def recognize_voice(voice_file: UploadFile = File(...)):
             rquid=str(uuid.uuid4()),
             user_query=recognized_text
         )
+        return recognized_text
+        # result = await process_voice(query)
         
-        result = await process_voice(query)
+        # # 4. Возвращаем ответ
+        # if "result" in result:
+        #     return {"text": result["result"]}
+        # else:
+        #     return {"text": f"Ошибка: {result.get('error', 'Неизвестная ошибка')}"}
         
-        # 4. Возвращаем ответ
-        if "result" in result:
-            return {"text": result["result"]}
-        else:
-            return {"text": f"Ошибка: {result.get('error', 'Неизвестная ошибка')}"}
     
     except SaluteSpeechError as e:
         logger.error(f"❌ Ошибка распознавания: {e}")
