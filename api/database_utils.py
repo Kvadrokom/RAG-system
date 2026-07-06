@@ -7,17 +7,18 @@ import numpy as np
 import os
 from dotenv import load_dotenv
 from logger import logger
+from rag_enrich import encode_text
 
 # Загрузим переменные окружения
 load_dotenv()
 
 # Модель для векторизации
-MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+# MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 DB_PASSWORD = os.getenv("DB_PASSWORD")
 
-# Глобальные переменные для модели (изначально None)
-_tokenizer = None
-_model = None
+# # Глобальные переменные для модели (изначально None)
+# _tokenizer = None
+# _model = None
 
 
 def _init_model():
@@ -45,26 +46,7 @@ def mean_pooling(model_output, attention_mask):
     return sum_embeddings / sum_mask
 
 
-def encode_text(text):
-    """Преобразует текст в векторное представление."""
-    try:
-        logger.info(f"Кодирование текста длиной {len(text)} символов...")
-        
-        # Ленивая инициализация модели
-        tokenizer, model = _init_model()
-        
-        inputs = tokenizer([text], padding=True, truncation=True, max_length=512, return_tensors="pt")
-        outputs = model(**inputs)
-        embeddings = mean_pooling(outputs, inputs["attention_mask"])
-        result = embeddings.flatten()
-        logger.info(f"Получен вектор размерностью {result.shape}")
-        return result
-    except Exception as e:
-        logger.error(f"Ошибка при кодировании текста: {e}")
-        raise
-
-
-def split_into_chunks(text: str, chunk_size: int = 500) -> List[str]:
+def split_into_chunks(text: str, chunk_size: int = 200) -> List[str]:
     """
     Разделяет текст на равные куски размером примерно chunk_size символов.
     """
@@ -158,9 +140,11 @@ def save_chunks_to_db(chunks: List[str], document_id: int):
         for index, chunk in enumerate(chunks):
             try:
                 logger.info(f"Обработка чанка {index + 1}/{len(chunks)}")
-                logger.info(f"Текст чанка (первые 100 символов): {chunk[:100]}...")
                 
-                embedding_vector = encode_text(chunk)
+                # ⚠️ ВАЖНО: для чанка используем префикс "passage: "
+                chunk_text_for_encoding = "passage: " + chunk
+                embedding_vector = encode_text(chunk_text_for_encoding, is_query=False)
+                
                 chunk_hash = calculate_md5_hash(chunk)
                 embedding_list = embedding_vector.tolist()
                 

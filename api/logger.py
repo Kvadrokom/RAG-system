@@ -1,6 +1,9 @@
 import logging
 import os
 import sys
+from fastapi import Request
+from fastapi.responses import JSONResponse
+import traceback
 
 def setup_logger(log_dir='/var/log/rag_system_log', log_file="rag_system.log", name=__name__):
     """
@@ -60,5 +63,43 @@ def setup_logger(log_dir='/var/log/rag_system_log', log_file="rag_system.log", n
     root_logger.setLevel(logging.INFO)
     
     return logger
+
+
+def create_logging_middleware(logger):
+    """
+    Создает middleware для логирования HTTP ошибок.
+    """
+    
+    async def logging_middleware(request: Request, call_next):
+        try:
+            response = await call_next(request)
+            
+            if response.status_code == 404 and any(scan_path in request.url.path for scan_path in ['.env', 'wp-config', 'docker-compose']):
+                return response  # Не логируем сканирование
+            # Логируем ТОЛЬКО ошибки (4xx и 5xx)
+            elif response.status_code >= 400:
+                client_ip = request.client.host if request.client else 'unknown'
+                logger.warning(
+                    f"HTTP {response.status_code} | "
+                    f"{request.method} {request.url.path} | "
+                    f"Client: {client_ip}"
+                )
+            
+            return response
+            
+        except Exception as e:
+            logger.error(
+                f"Unhandled exception in {request.method} {request.url.path}\n"
+                f"Error: {str(e)}\n"
+                f"Traceback:\n{traceback.format_exc()}"
+            )
+            
+            return JSONResponse(
+                status_code=500,
+                content={"detail": "Internal server error"}
+            )
+    
+    return logging_middleware
+
 
 logger = setup_logger()

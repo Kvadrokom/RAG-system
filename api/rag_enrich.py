@@ -1,44 +1,42 @@
+# rag_enrich.py
+from sentence_transformers import SentenceTransformer
 import psycopg2
 import numpy as np
-from transformers import AutoTokenizer, AutoModel
-import torch
 import os
 from dotenv import load_dotenv
 from logger import logger
 
-# Load environment variables
 load_dotenv()
 
-# Global variables
-MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-tokenizer = None
-model = None
+MODEL_NAME = "deepvk/USER-base"
+_model = None
 
-def init_model():
-    """Инициализирует трансформерную модель."""
-    global tokenizer, model
-    print("Инициализация модели...")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-    model = AutoModel.from_pretrained(MODEL_NAME)
-    print("Модель инициализирована")
+def get_model():
+    global _model
+    if _model is None:
+        logger.info(f"Загрузка модели {MODEL_NAME}...")
+        _model = SentenceTransformer(MODEL_NAME, device="cpu")
+        logger.info("Модель загружена")
+    return _model
 
-def mean_pooling(model_output, attention_mask):
-    """Средний пуллинг эмбеддингов"""
-    token_embeddings = model_output.last_hidden_state.detach().cpu().numpy()
-    input_mask_expanded = np.broadcast_to(np.expand_dims(attention_mask.cpu(), -1), token_embeddings.shape)
-    sum_embeddings = np.sum(token_embeddings * input_mask_expanded, axis=1)
-    sum_mask = np.clip(input_mask_expanded.sum(axis=1), a_min=1e-9, a_max=None)
-    return sum_embeddings / sum_mask
+def encode_text(text: str, is_query: bool = True) -> np.ndarray:
+    """
+    Преобразует текст в векторное представление.
+    
+    Args:
+        text: Текст для кодирования
+        is_query: True для поисковых запросов ("query: "),
+                  False для документов в БД ("passage: ")
+    """
+    model = get_model()
+    prefix = "query: " if is_query else "passage: "
+    text_with_prefix = prefix + text
+    embedding = model.encode(text_with_prefix, normalize_embeddings=True)
+    return embedding
 
-def encode_text(text):
-    """Преобразует текст в векторное представление."""
-    inputs = tokenizer([text], padding=True, truncation=True, max_length=512, return_tensors="pt")
-    outputs = model(**inputs)
-    embeddings = mean_pooling(outputs, inputs["attention_mask"])
-    return embeddings.flatten()
 
 def fetch_relevant_chunks(embedding_vector):
-    """Поиск релевантных фрагментов текста по векторному представлению."""
+    """Поиск релевантных фрагментов текста."""
     connection = psycopg2.connect(
         host="localhost",
         database="rag_system",
@@ -47,18 +45,12 @@ def fetch_relevant_chunks(embedding_vector):
     )
     cursor = connection.cursor()
     
-    # Преобразуем numpy array в строку для PostgreSQL
-    # pgvector ожидает формат: '[0.1,0.2,0.3,...]'
     if isinstance(embedding_vector, np.ndarray):
-        # Преобразуем в список и затем в строку
         embedding_list = embedding_vector.tolist()
         embedding_str = '[' + ','.join(str(x) for x in embedding_list) + ']'
-        logger.info(f"Преобразуем в список и затем в строку {embedding_str}")
     else:
         embedding_str = str(embedding_vector)
-        logger.info(f"Преобразуем в список и затем в строку {embedding_str}")
     
-    # Поиск ближайших соседей с использованием pgvector
     query = """
         SELECT chunk_text 
         FROM chunks 
@@ -74,23 +66,16 @@ def fetch_relevant_chunks(embedding_vector):
     
     return [chunk[0] for chunk in relevant_chunks]
 
+
 def enrich_with_rag_system(user_query):
     """Функция для обогащения запроса с помощью RAG-системы."""
-    # Инициализируем модель, если она ещё не инициализирована
-    global tokenizer, model
-    if tokenizer is None or model is None:
-        init_model()
-    
     try:
-        # Преобразуем запрос в векторное представление
         logger.info(f"Преобразуем запрос {user_query} в векторное представление")
-        embedding_vector = encode_text(user_query)
+        embedding_vector = encode_text(user_query, is_query=True)
         
-        # Ищем ближайшие соседи (релевантные фрагменты текста)
         relevant_chunks = fetch_relevant_chunks(embedding_vector)
-        logger.info(f"Ищем ближайшие соседи (релевантные фрагменты текста) {relevant_chunks}")
+        logger.info(f"Найдено {len(relevant_chunks)} релевантных фрагментов")
         
-        # Объединяем исходный запрос с релевантными фрагментами
         if relevant_chunks:
             enriched_query = "\n\n".join(relevant_chunks + [user_query])
         else:
@@ -99,6 +84,5 @@ def enrich_with_rag_system(user_query):
         return enriched_query
         
     except Exception as e:
-        print(f"Ошибка в RAG: {e}")
-        return user_query  # В случае ошибки возвращаем исходный запрос
-    
+        logger.error(f"Ошибка в RAG: {e}")
+        return user_query

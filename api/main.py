@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Header, Request, Form
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Header, Request, Form, Query
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.templating import Jinja2Templates
@@ -12,7 +12,7 @@ import jwt
 from typing import Optional
 from voice_processor import voice_processor
 from schemas import *
-from logger import logger
+from logger import logger, create_logging_middleware
 from dotenv import load_dotenv
 from rag_enrich import enrich_with_rag_system
 from database_utils import add_text_to_database
@@ -69,6 +69,12 @@ DB_CONFIG = {
     'user': 'rag_user',
     'password': DB_PASSWORD
 }
+
+
+# ========== ПОДКЛЮЧАЕМ MIDDLEWARE ==========
+app.middleware("http")(create_logging_middleware(logger))
+
+
 
 def get_db_connection():
     return psycopg2.connect(**DB_CONFIG)
@@ -311,10 +317,10 @@ async def get_stats():
 
 
 @app.get("/api/v1/search")
-async def search(request: Request):
-    query_param = request.query_params.get("q")
-    logger.info(f"Search request: {query_param}")
-    return enrich_with_rag_system(query_param)
+async def search(q: str):
+    logger.info(f"Search request: {q}")
+    result = enrich_with_rag_system(q)
+    return {"results": result}
 
 
 # Run the server
