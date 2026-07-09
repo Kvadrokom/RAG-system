@@ -1,5 +1,14 @@
 from datetime import datetime, timedelta
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Header, Request, Form
+from fastapi import (
+    FastAPI,
+    Depends,
+    HTTPException,
+    File,
+    UploadFile,
+    Header,
+    Request,
+    Form,
+)
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.templating import Jinja2Templates
@@ -24,8 +33,8 @@ from fastapi.responses import HTMLResponse
 load_dotenv()
 
 # Configurations
-GIGACHAT_API_URL = 'https://gigachat.devices.sberbank.ru/api/v1/chat/completions'
-CURRENT_TOKEN = ''
+GIGACHAT_API_URL = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
+CURRENT_TOKEN = ""
 TOKEN_EXPIRES_AT = time.time()
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
@@ -34,8 +43,8 @@ DB_PASSWORD = os.getenv("DB_PASSWORD")
 GIGACHAT_AUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 
 # Logging setup
-#logging.basicConfig(level=logging.INFO)
-#logger = logging.getLogger(__name__)
+# logging.basicConfig(level=logging.INFO)
+# logger = logging.getLogger(__name__)
 
 JINJA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "templates"))
 templates = Jinja2Templates(directory=JINJA_DIR)
@@ -55,7 +64,7 @@ def log_with_rqid(rqid, message):
 app = FastAPI(
     title="RAG System API",
     description="API для Telegram бота с векторным поиском",
-    version="1.0.0"
+    version="1.0.0",
 )
 
 STATIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "static"))
@@ -73,12 +82,13 @@ app.add_middleware(
 
 # DB connection config
 DB_CONFIG = {
-    'host': 'localhost',
-    'port': 5432,
-    'database': 'rag_system',
-    'user': 'rag_user',
-    'password': DB_PASSWORD
+    "host": "localhost",
+    "port": 5432,
+    "database": "rag_system",
+    "user": "rag_user",
+    "password": DB_PASSWORD,
 }
+
 
 def get_db_connection():
     return psycopg2.connect(**DB_CONFIG)
@@ -110,20 +120,20 @@ async def get_access_token():
         "Content-Type": "application/x-www-form-urlencoded",
         "Accept": "application/json",
         "RqUID": str(uuid.uuid4()),
-        "Authorization": f"Basic {SECRET_KEY}"
+        "Authorization": f"Basic {SECRET_KEY}",
     }
-    data = {
-        "scope": "GIGACHAT_API_PERS"
-    }
-    if CURRENT_TOKEN == '' or current_time > TOKEN_EXPIRES_AT:
+    data = {"scope": "GIGACHAT_API_PERS"}
+    if CURRENT_TOKEN == "" or current_time > TOKEN_EXPIRES_AT:
         connector = aiohttp.TCPConnector(verify_ssl=False)
         async with aiohttp.ClientSession(connector=connector) as session:
-            async with session.post(GIGACHAT_AUTH_URL, headers=headers, data=data) as resp:
+            async with session.post(
+                GIGACHAT_AUTH_URL, headers=headers, data=data
+            ) as resp:
                 response = await resp.json()
                 if resp.status == 200:
                     token_data = response
                     CURRENT_TOKEN = token_data["access_token"]
-                    TOKEN_EXPIRES_AT = current_time + token_data['expires_in']
+                    TOKEN_EXPIRES_AT = current_time + token_data["expires_in"]
 
 
 # Маршрут для генерации ответа с использованием RAG
@@ -134,15 +144,15 @@ async def process_voice(query: Query):
     """
     try:
         # Логируем входящий запрос
-        logger.info(f"Received request with rquid: {query.rquid}, User query: {query.user_query}")
+        logger.info(
+            f"Received request with rquid: {query.rquid}, User query: {query.user_query}"
+        )
 
         # Обогащаем запрос с помощью RAG-системы (пример условный, зависит от вашей реализации)
         enriched_query = enrich_with_rag_system(query.user_query)
 
         # Готовим запрос для Гигачата
-        gigachat_payload = {
-            "enriched_query": enriched_query
-        }
+        gigachat_payload = {"enriched_query": enriched_query}
 
         # Отправляем запрос в Гигачат
         await get_access_token()
@@ -150,12 +160,14 @@ async def process_voice(query: Query):
         connector = aiohttp.TCPConnector(ssl=False)
         async with aiohttp.ClientSession(connector=connector) as session:
             headers = {
-                "Content-Type":  "application/json",
+                "Content-Type": "application/json",
                 "Accept": "application/json",
                 "RqUID": query.rquid,
-                "Authorization": f"Bearer {CURRENT_TOKEN}"
+                "Authorization": f"Bearer {CURRENT_TOKEN}",
             }
-            async with session.post(GIGACHAT_API_URL, headers=headers, json=gigachat_payload) as resp:
+            async with session.post(
+                GIGACHAT_API_URL, headers=headers, json=gigachat_payload
+            ) as resp:
                 response = await resp.json()
 
             # Проверяем статус ответа от Гигачата
@@ -172,7 +184,6 @@ async def process_voice(query: Query):
         return {"error": str(e)}
 
 
-
 # Login route
 @app.post("/login", response_model=Token)
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
@@ -181,10 +192,11 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
         access_token_expires = ACCESS_TOKEN_EXPIRE_MINUTES * 60
         access_token = create_access_token(
             data={"sub": form_data.username},
-            expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+            expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
         )
         return {"access_token": access_token, "token_type": "bearer"}
     raise HTTPException(status_code=401, detail="Incorrect username or password")
+
 
 # Helper functions
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
@@ -197,6 +209,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
+
 @app.get("/", response_class=HTMLResponse)
 async def home_page(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
@@ -208,14 +221,16 @@ async def submit_text(request: Request, text: str = Form(...)):
     try:
         # Информация о документе
         file_name = "input.txt"
-        file_size = len(text.encode('utf-8'))
+        file_size = len(text.encode("utf-8"))
         file_type = "text/plain"
 
         # Добавляем текст в базу данных
         num_chunks = add_text_to_database(text, file_name, file_size, file_type)
 
         # Выводим сообщение о результатах
-        return templates.TemplateResponse("index.html", {"request": request, "num_chunks": num_chunks})
+        return templates.TemplateResponse(
+            "index.html", {"request": request, "num_chunks": num_chunks}
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -228,7 +243,9 @@ async def health():
         cursor = conn.cursor()
         cursor.execute("SELECT 1")
         tables = ["users", "documents", "chunks"]
-        cursor.execute(f"SELECT COUNT(*) FROM information_schema.tables WHERE table_name IN ({','.join(map(repr, tables))})")
+        cursor.execute(
+            f"SELECT COUNT(*) FROM information_schema.tables WHERE table_name IN ({','.join(map(repr, tables))})"
+        )
         count = cursor.fetchone()[0]
         cursor.close()
         conn.close()
@@ -236,15 +253,16 @@ async def health():
             "status": "healthy",
             "database": "connected",
             "tables_ready": count == len(tables),
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
         }
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         return {
             "status": "unhealthy",
             "error": str(e),
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
         }
+
 
 # Stats endpoint
 @app.get("/api/v1/stats")
@@ -267,11 +285,12 @@ async def get_stats():
             "docs_count": docs_count,
             "chunks_count": chunks_count,
             "db_size": db_size,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
         }
     except Exception as e:
         logger.error(f"Stats error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 # Voice recognition endpoint
 @app.post("/api/v1/voice/recognize")
@@ -283,8 +302,6 @@ async def recognize_voice(voice_file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"Voice recognition error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
 
 
 # Run the server
