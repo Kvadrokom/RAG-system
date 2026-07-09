@@ -1,10 +1,7 @@
-import json
 import uuid
-import base64
 import time
 import asyncio
 import aiohttp
-import requests
 
 GIGACHAT_AUTH_URL = 'https://ngw.devices.sberbank.ru:9443/api/v2/oauth'
 CURRENT_TOKEN = ''

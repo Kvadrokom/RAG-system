@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import importlib
 import sys
-import os
 
 # Удаляем старый модуль из кэша
 if 'voice_processor' in sys.modules:

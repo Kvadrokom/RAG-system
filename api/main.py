@@ -6,8 +6,10 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 import psycopg2
-import logging
-import os, json, uuid, base64, aiohttp, time
+import os
+import uuid
+import aiohttp
+import time
 import jwt
 from typing import Optional
 from voice_processor import voice_processor

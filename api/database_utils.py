@@ -2,7 +2,6 @@ import hashlib
 import psycopg2
 from typing import List
 from transformers import AutoTokenizer, AutoModel
-import torch
 import numpy as np
 import os
 from dotenv import load_dotenv
@@ -193,12 +192,12 @@ def add_text_to_database(text: str, file_name: str, file_size: int, file_type: s
         logger.info(f"Получено {len(chunks)} чанков")
 
         # Создаем запись в таблице documents
-        logger.info(f"Создание записи в таблице documents...")
+        logger.info("Создание записи в таблице documents...")
         document_id = create_document_record(file_name, file_size, file_type, user_id=user_id)
         logger.info(f"Создан документ с ID: {document_id}")
 
         # Сохраняем куски в базу данных
-        logger.info(f"Сохранение чанков в базу данных...")
+        logger.info("Сохранение чанков в базу данных...")
         save_chunks_to_db(chunks, document_id)
         
         logger.info(f"=== УСПЕШНО ЗАВЕРШЕНО: добавлено {len(chunks)} чанков для документа {document_id} ===")

@@ -4,7 +4,6 @@
 import os
 import tempfile
 import asyncio
-import aiofiles
 import subprocess
 import logging
 from typing import Dict
@@ -20,7 +19,7 @@ class VoiceProcessor:
         self.ffmpeg_available = self._check_ffmpeg()
         self._background_task = None  # Для хранения задачи
         
-        logger.info(f"🎤 Инициализация голосового процессора...")
+        logger.info("🎤 Инициализация голосового процессора...")
         logger.info(f"   Модель: Whisper {model_size}")
         logger.info(f"   FFmpeg доступен: {self.ffmpeg_available}")
     
@@ -195,7 +194,7 @@ class VoiceProcessor:
                 if os.path.exists(f):
                     try:
                         os.unlink(f)
-                    except:
+                    except Exception as e:
                         pass
             
             if text:
@@ -222,7 +221,7 @@ class VoiceProcessor:
                 if os.path.exists(f):
                     try:
                         os.unlink(f)
-                    except:
+                    except Exception as e:
                         pass
             
             return {

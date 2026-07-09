@@ -19,20 +19,20 @@ async def main():
     # Импортируем внутри async функции
     import voice_processor
     
-    print(f"✅ Модуль загружен")
+    print("✅ Модуль загружен")
     vp = voice_processor.voice_processor
     
-    print(f"\n📋 Свойства объекта:")
+    print("\n📋 Свойства объекта:")
     print(f"   ffmpeg_available: {vp.ffmpeg_available}")
     print(f"   loaded: {vp.loaded}")
     print(f"   model_size: {vp.model_size}")
     
     # Запускаем фоновую загрузку
-    print(f"\n🔄 Запуск фоновой загрузки...")
+    print("\n🔄 Запуск фоновой загрузки...")
     await vp.start_background_load()
     
     # Тест 1: Быстрый тест
-    print(f"\n🧪 Тест 1: Быстрая проверка...")
+    print("\n🧪 Тест 1: Быстрая проверка...")
     result1 = await vp.process_voice(b'tiny test')
     print(f"   Успех: {result1.get('success')}")
     print(f"   Текст: {result1.get('text', 'N/A')[:50]}")
@@ -42,7 +42,7 @@ async def main():
     time.sleep(1)
     
     # Тест 2: С большими данными
-    print(f"\n🧪 Тест 2: С имитацией голосовых данных...")
+    print("\n🧪 Тест 2: С имитацией голосовых данных...")
     fake_audio = b'fake ogg audio data ' * 50  # 1000+ байт
     result2 = await vp.process_voice(fake_audio)
     
@@ -52,7 +52,7 @@ async def main():
         print(f"   Текст: {result2.get('text')[:100]}...")
     
     # Проверяем загрузилась ли модель
-    print(f"\n📊 Финальный статус:")
+    print("\n📊 Финальный статус:")
     print(f"   loaded: {vp.loaded}")
     print(f"   model: {'✅ есть' if vp.model else '❌ нет'}")
     

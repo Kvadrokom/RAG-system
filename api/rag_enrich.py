@@ -1,7 +1,6 @@
 import psycopg2
 import numpy as np
 from transformers import AutoTokenizer, AutoModel
-import torch
 import os
 from dotenv import load_dotenv
 
