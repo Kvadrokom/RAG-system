@@ -138,7 +138,7 @@ async def enrich_voice_with_rag(recognized_text: str) -> dict:
 
 # ========== ЭНДПОИНТЫ ==========
 
-@app.post("/gigachat/generate_answer")
+@app.post("/gigachat/generate_answer/rag_system")
 async def process_voice(query: Query):
     """Обрабатывает текстовый запрос с RAG и отправляет в GigaChat."""
     try:
@@ -182,12 +182,56 @@ async def process_voice(query: Query):
         return {"error": str(e)}
 
 
+
+@app.post("/gigachat/generate_answer")
+async def process_voice(query: Query):
+    """Обрабатывает текстовый запрос и отправляет в GigaChat."""
+    try:
+        logger.info(f"✅ Received request with rquid: {query.rquid}, User query: {query.user_query}")
+        
+        # enriched_query = enrich_with_rag_system(query.user_query)
+        # logger.info(f"Enriched query: {enriched_query[:200]}...")
+        
+        token = await get_access_token()
+        logger.info("Token obtained successfully")
+        
+        gigachat_payload = {
+            "model": "GigaChat-2",
+            "messages": [{"role": "user", "content": query.user_query}],
+            "temperature": 0.7,
+            "max_tokens": 1000
+        }
+        
+        connector = aiohttp.TCPConnector(ssl=False)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "RqUID": query.rquid,
+                "Authorization": f"Bearer {token}"
+            }
+            
+            async with session.post(GIGACHAT_API_URL, headers=headers, json=gigachat_payload) as resp:
+                if resp.status == 200:
+                    response = await resp.json()
+                    answer = response['choices'][0]['message']['content']
+                    logger.info(f"Answer received (length: {len(answer)} chars)")
+                    return {"result": answer}
+                else:
+                    error_text = await resp.text()
+                    logger.error(f"GigaChat error {resp.status}: {error_text}")
+                    return {"error": f"GigaChat error: {resp.status}, details: {error_text}"}
+                    
+    except Exception as e:
+        logger.exception(f"Exception in process_voice: {e}")
+        return {"error": str(e)}
+
+
 @app.post("/api/v1/voice/recognize")
 async def recognize_voice(voice_file: UploadFile = File(...)):
     """
     Обрабатывает голосовое сообщение:
     1. Распознает речь через SaluteSpeech
-    2. Отправляет распознанный текст в существующий эндпоинт /gigachat/generate_answer
     """
     logger.info(f"🎤 Получен голосовой запрос: {voice_file.filename}")
     
@@ -207,11 +251,11 @@ async def recognize_voice(voice_file: UploadFile = File(...)):
         if not recognized_text or not recognized_text.strip():
             return {"text": "Не удалось распознать голосовое сообщение"}
         
-        # 3. Отправляем распознанный текст в существующий эндпоинт!
-        query = Query(
-            rquid=str(uuid.uuid4()),
-            user_query=recognized_text
-        )
+        # # 3. Отправляем распознанный текст в существующий эндпоинт!
+        # query = Query(
+        #     rquid=str(uuid.uuid4()),
+        #     user_query=recognized_text
+        # )
         return recognized_text
         # result = await process_voice(query)
         

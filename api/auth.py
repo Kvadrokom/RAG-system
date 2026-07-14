@@ -1,3 +1,4 @@
+
 """
 Модуль для работы с авторизацией в сервисах Сбера:
 - GigaChat
@@ -55,7 +56,7 @@ async def _get_token(service: str, secret_key: str, scope: str) -> str:
     
     # Если токен еще действителен, возвращаем его
     if _tokens[service]["token"] and current_time < _tokens[service]["expires_at"]:
-        logger.debug(f"{service.capitalize()} token still valid, expires in {_tokens[service]['expires_at'] - current_time:.0f} seconds")
+        logger.info(f"{service.capitalize()} token still valid, expires in {_tokens[service]['expires_at'] - current_time:.0f} seconds")
         return _tokens[service]["token"]
     
     logger.info(f"Requesting new {service} token...")
