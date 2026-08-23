@@ -364,6 +364,7 @@ async def get_stats():
 async def search(q: str):
     logger.info(f"Search request: {q}")
     result = enrich_with_rag_system(q)
+    logger.info(f"Return result search {result}")
     return {"results": result}
 
 
