@@ -80,14 +80,6 @@ def get_db_connection():
     return psycopg2.connect(**DB_CONFIG)
 
 
-# JWT Authentication
-def verify_jwt(token: str = Header(None)):
-    try:
-        decoded = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return decoded
-    except jwt.PyJWTError:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
@@ -286,15 +278,6 @@ async def recognize_voice_local(voice_file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"Voice recognition error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-# Login route
-@app.post("/login", response_model=Token)
-async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    if form_data.username == "admin" and form_data.password == "password":
-        access_token = create_access_token(data={"sub": form_data.username})
-        return {"access_token": access_token, "token_type": "bearer"}
-    raise HTTPException(status_code=401, detail="Incorrect username or password")
 
 
 @app.get("/", response_class=HTMLResponse)
