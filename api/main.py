@@ -24,6 +24,9 @@ from auth import get_access_token, get_gigachat_token, get_salute_token
 # Импортируем функцию распознавания из my_salute_speech.py
 from salute_speech_voice import recognize_audio, SaluteSpeechError
 
+# Импортируем функцию распознавания из speechkit.py
+from speechkit import *
+
 load_dotenv()
 
 # Configurations
@@ -35,6 +38,7 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 DB_PASSWORD = os.getenv("DB_PASSWORD")
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key")
+YANDEX_API_KEY = os.getenv("YANDEX_API_KEY")
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
@@ -223,7 +227,7 @@ async def process_voice(query: Query):
 async def recognize_voice(voice_file: UploadFile = File(...)):
     """
     Обрабатывает голосовое сообщение:
-    1. Распознает речь через SaluteSpeech
+    1. Распознает речь через
     """
     logger.info(f"🎤 Получен голосовой запрос: {voice_file.filename}")
     
@@ -232,33 +236,27 @@ async def recognize_voice(voice_file: UploadFile = File(...)):
         voice_data = await voice_file.read()
         logger.info(f"📦 Размер аудио: {len(voice_data)} байт")
         
-        # 2. Распознаем речь через SaluteSpeech
-        recognized_text = await recognize_audio(
+        # # 2. Распознаем речь через SaluteSpeech
+        # recognized_text = await recognize_audio(
+        #     audio_bytes=voice_data,
+        #     filename=voice_file.filename
+        # )
+        
+        # 2. Распознаем речь через SpeechKit yandex
+        recognized_text = await recognize_audio_speechkit(
             audio_bytes=voice_data,
-            filename=voice_file.filename,
-            language="ru-RU"
+            filename=voice_file.filename
         )
+        
         logger.info(f"📝 Распознанный текст: {recognized_text[:100]}...")
         
         if not recognized_text or not recognized_text.strip():
             return {"text": "Не удалось распознать голосовое сообщение"}
         
-        # # 3. Отправляем распознанный текст в существующий эндпоинт!
-        # query = Query(
-        #     rquid=str(uuid.uuid4()),
-        #     user_query=recognized_text
-        # )
         return recognized_text
-        # result = await process_voice(query)
-        
-        # # 4. Возвращаем ответ
-        # if "result" in result:
-        #     return {"text": result["result"]}
-        # else:
-        #     return {"text": f"Ошибка: {result.get('error', 'Неизвестная ошибка')}"}
-        
-    
-    except SaluteSpeechError as e:
+
+
+    except SpeechError as e:
         logger.error(f"❌ Ошибка распознавания: {e}")
         return {"text": f"Ошибка распознавания речи: {str(e)}"}
     
